@@ -11,7 +11,8 @@ const STORAGE_KEY = 'metabase_session_token';
 const MetabaseForm: React.FC<Props> = ({ onLoad, isLoading }) => {
   const [url, setUrl] = useState('');
   const [token, setToken] = useState(() => localStorage.getItem(STORAGE_KEY) || '');
-  const [useProxy, setUseProxy] = useState(false);
+  // Proxy ativado por padrão para evitar erros de CORS na Vercel
+  const [useProxy, setUseProxy] = useState(true);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
