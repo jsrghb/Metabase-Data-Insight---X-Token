@@ -16,7 +16,6 @@ export const parseMetabaseUrl = (urlStr: string): { type: 'question' | 'dashboar
     const rawParams: Record<string, string> = {};
     searchParams.forEach((value, key) => {
       let decodedKey = key;
-      // Trata dupla codificação comum em redirects (ex: %255B -> %5B -> [)
       if (decodedKey.includes('%')) {
         try { decodedKey = decodeURIComponent(decodedKey); } catch(e) {}
       }
@@ -41,7 +40,16 @@ export const getBaseUrl = (url: string): string | null => {
 };
 
 /**
- * Busca metadados completos do dashboard (cards e definições de filtros)
+ * Encapsula a lógica de URL com proxy
+ */
+const getProxiedUrl = (url: string, useProxy: boolean): string => {
+  if (!useProxy) return url;
+  // Usamos o nosso proxy interno da Vercel
+  return `/api/proxy?url=${encodeURIComponent(url)}`;
+};
+
+/**
+ * Busca metadados completos do dashboard
  */
 export const fetchDashboardMetadata = async (
   baseUrl: string, 
@@ -49,8 +57,7 @@ export const fetchDashboardMetadata = async (
   token: string, 
   useProxy: boolean
 ): Promise<{ cards: MetabaseCardInfo[], parameters: MetabaseParameter[] }> => {
-  let apiUrl = `${baseUrl}/api/dashboard/${dashboardId}`;
-  if (useProxy) apiUrl = `https://corsproxy.io/?${encodeURIComponent(apiUrl)}`;
+  const apiUrl = getProxiedUrl(`${baseUrl}/api/dashboard/${dashboardId}`, useProxy);
 
   const response = await fetch(apiUrl, {
     headers: { 'X-Metabase-Session': token }
@@ -60,8 +67,6 @@ export const fetchDashboardMetadata = async (
   
   const data = await response.json();
   
-  // ordered_cards contém a relação entre dashboard e card
-  // oc.id é o dashcard_id, oc.card.id é o card_id
   const cards = (data.ordered_cards || [])
     .filter((oc: any) => oc.card)
     .map((oc: any) => ({
@@ -81,7 +86,7 @@ export const fetchDashboardMetadata = async (
 };
 
 /**
- * Mapeia os parâmetros da URL para o formato que o Metabase API espera (usando IDs internos)
+ * Mapeia os parâmetros da URL para o formato Metabase
  */
 export const mapUrlParamsToMetabase = (
   rawParams: Record<string, string>, 
@@ -90,7 +95,6 @@ export const mapUrlParamsToMetabase = (
   const EXCLUDED = ['tab', 'dashboard_load_id'];
   const metabaseParams: any[] = [];
 
-  // 1. Tenta mapear slugs conhecidos do dashboard
   dashboardParams.forEach(p => {
     if (rawParams[p.slug]) {
       metabaseParams.push({
@@ -100,17 +104,11 @@ export const mapUrlParamsToMetabase = (
     }
   });
 
-  // 2. Tenta mapear chaves da URL que batem exatamente com o slug ou id, evitando duplicatas
   Object.entries(rawParams).forEach(([key, value]) => {
     if (EXCLUDED.includes(key.toLowerCase()) || !value) return;
-    
-    const alreadyMapped = metabaseParams.some(mp => mp.value === value && (mp.id === key || dashboardParams.find(dp => dp.id === mp.id)?.slug === key));
-    
+    const alreadyMapped = metabaseParams.some(mp => mp.id === key || dashboardParams.find(dp => dp.id === mp.id)?.slug === key);
     if (!alreadyMapped) {
-      metabaseParams.push({
-        id: key,
-        value: value
-      });
+      metabaseParams.push({ id: key, value: value });
     }
   });
 
@@ -118,8 +116,7 @@ export const mapUrlParamsToMetabase = (
 };
 
 /**
- * Busca o CSV de um card respeitando filtros.
- * Usa o endpoint de dashcard se disponível, que é mais preciso para dashboards.
+ * Busca o CSV de um card
  */
 export const fetchCardCsv = async (
   baseUrl: string, 
@@ -130,18 +127,16 @@ export const fetchCardCsv = async (
   dashcardId?: number,
   parameters: any[] = []
 ): Promise<string> => {
-  let apiUrl = '';
-  
+  let targetUrl = '';
   if (dashboardId && dashcardId) {
-    // Endpoint recomendado para cards dentro de um dashboard específico
-    apiUrl = `${baseUrl}/api/dashboard/${dashboardId}/dashcard/${dashcardId}/card/${cardId}/query/csv`;
+    targetUrl = `${baseUrl}/api/dashboard/${dashboardId}/dashcard/${dashcardId}/card/${cardId}/query/csv`;
   } else if (dashboardId) {
-    apiUrl = `${baseUrl}/api/dashboard/${dashboardId}/card/${cardId}/query/csv`;
+    targetUrl = `${baseUrl}/api/dashboard/${dashboardId}/card/${cardId}/query/csv`;
   } else {
-    apiUrl = `${baseUrl}/api/card/${cardId}/query/csv`;
+    targetUrl = `${baseUrl}/api/card/${cardId}/query/csv`;
   }
 
-  if (useProxy) apiUrl = `https://corsproxy.io/?${encodeURIComponent(apiUrl)}`;
+  const apiUrl = getProxiedUrl(targetUrl, useProxy);
 
   const response = await fetch(apiUrl, {
     method: 'POST',
@@ -161,7 +156,7 @@ export const fetchCardCsv = async (
 
 export const parseCsv = (csvText: string): MetabaseData => {
   const lines = csvText.split(/\r?\n/).filter(line => line.trim() !== '');
-  if (lines.length === 0) throw new Error('O Metabase retornou um dataset vazio para estes filtros.');
+  if (lines.length === 0) throw new Error('O Metabase retornou um dataset vazio.');
 
   const parseLine = (line: string) => {
     const result = [];
