@@ -1,0 +1,5 @@
+{
+  "name": "Metabase CSV Insight Explorer",
+  "description": "A professional dashboard that fetches data from Metabase questions via CSV, visualizes it with Recharts, and generates AI-powered insights using Gemini.",
+  "requestFramePermissions": []
+}
