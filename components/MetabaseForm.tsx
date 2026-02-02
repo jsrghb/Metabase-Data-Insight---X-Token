@@ -6,18 +6,20 @@ interface Props {
   isLoading: boolean;
 }
 
-const STORAGE_KEY = 'metabase_session_token';
+const TOKEN_STORAGE_KEY = 'metabase_session_token';
+const URL_STORAGE_KEY = 'metabase_last_url';
 
 const MetabaseForm: React.FC<Props> = ({ onLoad, isLoading }) => {
-  const [url, setUrl] = useState('');
-  const [token, setToken] = useState(() => localStorage.getItem(STORAGE_KEY) || '');
+  const [url, setUrl] = useState(() => localStorage.getItem(URL_STORAGE_KEY) || '');
+  const [token, setToken] = useState(() => localStorage.getItem(TOKEN_STORAGE_KEY) || '');
   // Proxy ativado por padrão para evitar erros de CORS na Vercel
   const [useProxy, setUseProxy] = useState(true);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (url && token) {
-      localStorage.setItem(STORAGE_KEY, token);
+      localStorage.setItem(TOKEN_STORAGE_KEY, token);
+      localStorage.setItem(URL_STORAGE_KEY, url);
       onLoad(url, token, useProxy);
     }
   };

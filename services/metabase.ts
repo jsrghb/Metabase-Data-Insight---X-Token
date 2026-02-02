@@ -44,7 +44,6 @@ export const getBaseUrl = (url: string): string | null => {
  */
 const getProxiedUrl = (url: string, useProxy: boolean): string => {
   if (!useProxy) return url;
-  // Usamos o nosso proxy interno da Vercel
   return `/api/proxy?url=${encodeURIComponent(url)}`;
 };
 
@@ -63,7 +62,10 @@ export const fetchDashboardMetadata = async (
     headers: { 'X-Metabase-Session': token }
   });
 
-  if (!response.ok) throw new Error('Falha ao carregar dashboard. Verifique o token ou permissões.');
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Falha ao carregar dashboard (HTTP ${response.status}): ${errorText || 'Sem detalhes'}`);
+  }
   
   const data = await response.json();
   
@@ -92,11 +94,11 @@ export const mapUrlParamsToMetabase = (
   rawParams: Record<string, string>, 
   dashboardParams: MetabaseParameter[]
 ): any[] => {
-  const EXCLUDED = ['tab', 'dashboard_load_id'];
+  const EXCLUDED = ['tab', 'dashboard_load_id', 'dashboard_id'];
   const metabaseParams: any[] = [];
 
   dashboardParams.forEach(p => {
-    if (rawParams[p.slug]) {
+    if (rawParams[p.slug] !== undefined) {
       metabaseParams.push({
         id: p.id,
         value: rawParams[p.slug]
@@ -105,9 +107,12 @@ export const mapUrlParamsToMetabase = (
   });
 
   Object.entries(rawParams).forEach(([key, value]) => {
-    if (EXCLUDED.includes(key.toLowerCase()) || !value) return;
-    const alreadyMapped = metabaseParams.some(mp => mp.id === key || dashboardParams.find(dp => dp.id === mp.id)?.slug === key);
-    if (!alreadyMapped) {
+    if (EXCLUDED.includes(key.toLowerCase()) || value === undefined || value === null) return;
+    
+    const alreadyMappedBySlug = dashboardParams.some(dp => dp.slug === key);
+    const alreadyMappedById = metabaseParams.some(mp => mp.id === key);
+    
+    if (!alreadyMappedBySlug && !alreadyMappedById) {
       metabaseParams.push({ id: key, value: value });
     }
   });
@@ -130,8 +135,6 @@ export const fetchCardCsv = async (
   let targetUrl = '';
   if (dashboardId && dashcardId) {
     targetUrl = `${baseUrl}/api/dashboard/${dashboardId}/dashcard/${dashcardId}/card/${cardId}/query/csv`;
-  } else if (dashboardId) {
-    targetUrl = `${baseUrl}/api/dashboard/${dashboardId}/card/${cardId}/query/csv`;
   } else {
     targetUrl = `${baseUrl}/api/card/${cardId}/query/csv`;
   }
@@ -148,15 +151,27 @@ export const fetchCardCsv = async (
   });
 
   if (!response.ok) {
-    throw new Error(`Erro API Metabase: ${response.status} ao carregar dados.`);
+    let errorMsg = `Erro ${response.status}`;
+    try {
+      const errorJson = await response.json();
+      errorMsg = errorJson.message || errorJson.error || JSON.stringify(errorJson);
+    } catch {
+      const text = await response.text();
+      errorMsg = text || errorMsg;
+    }
+    throw new Error(`Erro Metabase: ${errorMsg}`);
   }
 
   return await response.text();
 };
 
 export const parseCsv = (csvText: string): MetabaseData => {
+  if (!csvText || csvText.trim().startsWith('<!DOCTYPE html>')) {
+    throw new Error('A resposta do Metabase não é um CSV válido (pode ser uma página de erro HTML).');
+  }
+
   const lines = csvText.split(/\r?\n/).filter(line => line.trim() !== '');
-  if (lines.length === 0) throw new Error('O Metabase retornou um dataset vazio.');
+  if (lines.length === 0) throw new Error('O dataset retornado está vazio.');
 
   const parseLine = (line: string) => {
     const result = [];
@@ -164,14 +179,22 @@ export const parseCsv = (csvText: string): MetabaseData => {
     let inQuotes = false;
     for (let i = 0; i < line.length; i++) {
       const char = line[i];
-      if (char === '"') inQuotes = !inQuotes;
-      else if (char === ',' && !inQuotes) {
+      if (char === '"') {
+        if (inQuotes && line[i+1] === '"') {
+          cur += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (char === ',' && !inQuotes) {
         result.push(cur.trim());
         cur = '';
-      } else cur += char;
+      } else {
+        cur += char;
+      }
     }
     result.push(cur.trim());
-    return result.map(v => v.replace(/^"|"$/g, ''));
+    return result;
   };
 
   const headers = parseLine(lines[0]);
@@ -180,7 +203,7 @@ export const parseCsv = (csvText: string): MetabaseData => {
     const rowObj: any = {};
     headers.forEach((header, index) => {
       const val = values[index];
-      if (val && /^-?\d+(\.\d+)?$/.test(val)) {
+      if (val && val !== '' && !isNaN(val as any) && isFinite(val as any)) {
         rowObj[header] = Number(val);
       } else {
         rowObj[header] = val;
