@@ -88,34 +88,38 @@ export const fetchDashboardMetadata = async (
 };
 
 /**
- * Mapeia os parâmetros da URL para o formato Metabase
+ * Mapeia os parâmetros da URL para o formato Metabase de forma segura
  */
 export const mapUrlParamsToMetabase = (
   rawParams: Record<string, string>, 
   dashboardParams: MetabaseParameter[]
 ): any[] => {
-  const EXCLUDED = ['tab', 'dashboard_load_id', 'dashboard_id'];
   const metabaseParams: any[] = [];
 
-  dashboardParams.forEach(p => {
-    if (rawParams[p.slug] !== undefined) {
-      metabaseParams.push({
-        id: p.id,
-        value: rawParams[p.slug]
-      });
-    }
-  });
-
-  Object.entries(rawParams).forEach(([key, value]) => {
-    if (EXCLUDED.includes(key.toLowerCase()) || value === undefined || value === null) return;
-    
-    const alreadyMappedBySlug = dashboardParams.some(dp => dp.slug === key);
-    const alreadyMappedById = metabaseParams.some(mp => mp.id === key);
-    
-    if (!alreadyMappedBySlug && !alreadyMappedById) {
+  // Caso 1: Estamos em um Dashboard com parâmetros conhecidos
+  if (dashboardParams && dashboardParams.length > 0) {
+    dashboardParams.forEach(p => {
+      // Priorizamos o slug (nome na URL) para encontrar o valor
+      const value = rawParams[p.slug];
+      if (value !== undefined && value !== null && value !== '') {
+        metabaseParams.push({
+          id: p.id, // O Metabase exige o UUID interno do parâmetro para Dashboards
+          value: value
+        });
+      }
+    });
+  } 
+  // Caso 2: Estamos em uma Question individual (ou dashboard sem definições de parâmetros)
+  else {
+    const EXCLUDED = ['tab', 'dashboard_load_id', 'dashboard_id', 'id'];
+    Object.entries(rawParams).forEach(([key, value]) => {
+      // Ignora chaves vazias ou parâmetros internos conhecidos que causariam o erro "nil"
+      if (!key || key === 'nil' || EXCLUDED.includes(key.toLowerCase())) return;
+      if (value === undefined || value === null || value === '') return;
+      
       metabaseParams.push({ id: key, value: value });
-    }
-  });
+    });
+  }
 
   return metabaseParams;
 };
@@ -141,13 +145,20 @@ export const fetchCardCsv = async (
 
   const apiUrl = getProxiedUrl(targetUrl, useProxy);
 
+  // O Metabase é sensível ao corpo da requisição. 
+  // Se não houver parâmetros, alguns endpoints preferem um objeto vazio ou omitir a chave.
+  const body: any = {};
+  if (parameters && parameters.length > 0) {
+    body.parameters = parameters;
+  }
+
   const response = await fetch(apiUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'X-Metabase-Session': token,
     },
-    body: JSON.stringify({ parameters }),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {
